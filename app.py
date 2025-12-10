@@ -6,7 +6,7 @@ from pypfopt import EfficientFrontier, risk_models, expected_returns
 from pypfopt import objective_functions
 
 app = Flask(__name__)
-CORS(app)  # Allow n8n to call this API
+CORS(app)  
 
 @app.route('/', methods=['GET'])
 def health_check():
@@ -38,17 +38,14 @@ def optimize_portfolio():
         if len(portfolio) < 2:
             return jsonify({'error': 'Need at least 2 assets for optimization'}), 400
         
-        # Extract data
         tickers = [p['ticker'] for p in portfolio]
         current_weights = {p['ticker']: p['weight'] for p in portfolio}
         expected_rets = {p['ticker']: p.get('returns', 0.10) for p in portfolio}
         volatilities = {p['ticker']: p.get('volatility', 0.20) for p in portfolio}
         
-        # Create expected returns Series
         mu = pd.Series(expected_rets)
         
-        # Create a simple covariance matrix from volatilities
-        # Using correlation of 0.3 as default (can be enhanced later)
+        # Covariance matrix from volatilities, crr = .3 def
         n = len(tickers)
         corr_matrix = np.full((n, n), 0.3)
         np.fill_diagonal(corr_matrix, 1.0)
@@ -57,21 +54,20 @@ def optimize_portfolio():
         cov_matrix = np.outer(vol_array, vol_array) * corr_matrix
         S = pd.DataFrame(cov_matrix, index=tickers, columns=tickers)
         
-        # Optimize for max Sharpe ratio
         ef = EfficientFrontier(mu, S)
-        ef.add_objective(objective_functions.L2_reg, gamma=0.1)  # Regularization to avoid extreme weights
+        ef.add_objective(objective_functions.L2_reg, gamma=0.1)
         
         try:
             weights = ef.max_sharpe(risk_free_rate=risk_free_rate)
         except Exception as e:
-            # Fallback to minimum volatility if max_sharpe fails
+            # excessive max_sharpe exit
             ef = EfficientFrontier(mu, S)
             weights = ef.min_volatility()
         
         cleaned_weights = ef.clean_weights()
         performance = ef.portfolio_performance(verbose=False, risk_free_rate=risk_free_rate)
         
-        # Calculate current portfolio performance
+        # est curr port perf
         current_return = sum(current_weights[t] * expected_rets[t] for t in tickers)
         current_vol = np.sqrt(
             sum(
@@ -81,7 +77,6 @@ def optimize_portfolio():
         )
         current_sharpe = (current_return - risk_free_rate) / current_vol if current_vol > 0 else 0
         
-        # Build result
         result = {
             'status': 'success',
             'current_portfolio': {
@@ -104,13 +99,14 @@ def optimize_portfolio():
             'rebalancing_trades': []
         }
         
-        # Calculate rebalancing trades
+        # Config trades
         for ticker in tickers:
             current = current_weights[ticker]
             optimal = cleaned_weights.get(ticker, 0)
             diff = optimal - current
-            
-            if abs(diff) > 0.005:  # Only show if >0.5% change
+
+            # Show if >0.5% change
+            if abs(diff) > 0.005:  
                 name = next((p['name'] for p in portfolio if p['ticker'] == ticker), ticker)
                 result['rebalancing_trades'].append({
                     'ticker': ticker,
@@ -121,7 +117,6 @@ def optimize_portfolio():
                     'action': 'BUY' if diff > 0 else 'SELL'
                 })
         
-        # Sort by absolute change
         result['rebalancing_trades'].sort(key=lambda x: abs(x['change']), reverse=True)
         
         return jsonify(result)
